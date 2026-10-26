@@ -1,0 +1,84 @@
+{
+  "name": "dayline",
+  "productName": "Dayline",
+  "version": "1.0.0",
+  "description": "할 일과 타임라인을 한 화면에 — Windows 업무용 할 일 앱",
+  "author": "Kim Aeri",
+  "license": "MIT",
+  "private": true,
+  "homepage": "https://github.com/kimohzl/dayline",
+  "main": "electron/main.js",
+  "scripts": {
+    "start": "electron .",
+    "build:win": "electron-builder --win dir --x64 --publish never && node build/set-exe-meta.mjs release/win-unpacked/Dayline.exe build/icon.ico && electron-builder --win nsis --x64 --prepackaged release/win-unpacked --publish never"
+  },
+  "dependencies": {
+    "sql.js": "1.11.0"
+  },
+  "devDependencies": {
+    "electron": "33.2.1",
+    "electron-builder": "25.1.8",
+    "pe-library": "1.0.1",
+    "resedit": "2.0.3"
+  },
+  "build": {
+    "appId": "com.dayline.app",
+    "productName": "Dayline",
+    "copyright": "Copyright © 2026 Kim Aeri",
+    "directories": {
+      "output": "release",
+      "buildResources": "build"
+    },
+    "files": [
+      "index.html",
+      "styles.css",
+      "js/**",
+      "assets/**",
+      "electron/**",
+      "package.json",
+      "!**/*.map"
+    ],
+    "asarUnpack": [
+      "node_modules/sql.js/dist/sql-wasm.wasm"
+    ],
+    "protocols": [
+      {
+        "name": "Dayline",
+        "schemes": [
+          "dayline"
+        ]
+      }
+    ],
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "icon": "build/icon.ico",
+      "signAndEditExecutable": false
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": false,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "Dayline",
+      "uninstallDisplayName": "Dayline",
+      "installerIcon": "build/icon.ico",
+      "uninstallerIcon": "build/icon.ico",
+      "installerLanguages": [
+        "ko_KR"
+      ],
+      "language": "1042",
+      "runAfterFinish": true,
+      "deleteAppDataOnUninstall": false,
+      "include": "build/installer.nsh"
+    },
+    "publish": null
+  }
+}

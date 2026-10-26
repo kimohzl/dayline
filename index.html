@@ -1,0 +1,19 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' data: blob:; style-src 'self' 'unsafe-inline'; script-src 'self'; font-src 'self'">
+  <title>Dayline</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <div id="app"></div>
+  <div id="sys-toasts" aria-live="polite"></div>
+  <input type="file" id="file-import" accept="application/json" hidden>
+  <input type="file" id="file-any" multiple hidden>
+  <input type="file" id="file-text" accept=".txt,.md,.markdown,.csv,text/plain,text/markdown" hidden>
+  <script src="js/parser.js"></script>
+  <script src="js/app.js"></script>
+</body>
+</html>

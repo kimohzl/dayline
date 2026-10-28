@@ -23,6 +23,9 @@ contextBridge.exposeInMainWorld('dayline', {
   copyImage: (dataUrl) => ipcRenderer.invoke('clip:image', String(dataUrl)),
   sendFeedback: (url, json) => ipcRenderer.invoke('feedback:send', String(url), String(json)),
   openBackupDir: () => ipcRenderer.invoke('backup:openDir'),
+  saveImage: (dataUrl) => ipcRenderer.invoke('img:save', String(dataUrl)),
+  deleteImage: (file) => ipcRenderer.invoke('img:delete', String(file)),
+  openImage: (file) => ipcRenderer.invoke('img:open', String(file)),
   on: (ch, cb) => {
     if (!CHANNELS.includes(ch)) return;
     ipcRenderer.on(ch, (_e, data) => cb(data));

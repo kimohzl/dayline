@@ -6,6 +6,8 @@ const {
 const path = require('path');
 const fs = require('fs');
 const os = require('os');
+const crypto = require('crypto');
+const { pathToFileURL } = require('url');
 
 const APP_ID = 'com.dayline.app';
 const PROTOCOL = 'dayline';
@@ -459,7 +461,33 @@ function start() {
     packaged: app.isPackaged,
     startShow: st.startHidden !== true,
     os: osName(),
+    imgBase: pathToFileURL(imgDir()).href + '/',
   }));
+  // 할 일 메모의 사진: 앱 데이터 폴더(images)에 파일로 두고 할 일에는 파일 이름만 적는다
+  ipcMain.handle('img:save', (_e, dataUrl) => {
+    try {
+      const m = /^data:image\/(png|jpeg|jpg|gif|webp|bmp);base64,(.+)$/.exec(String(dataUrl || ''));
+      if (!m) throw new Error('사진 형식이 아니에요');
+      const buf = Buffer.from(m[2], 'base64');
+      if (buf.length > 20 * 1024 * 1024) throw new Error('사진이 너무 커요(20MB까지)');
+      fs.mkdirSync(imgDir(), { recursive: true });
+      const ext = m[1] === 'jpeg' ? 'jpg' : m[1];
+      const file = `${Date.now().toString(36)}-${crypto.randomBytes(4).toString('hex')}.${ext}`;
+      fs.writeFileSync(path.join(imgDir(), file), buf);
+      return { ok: true, file };
+    } catch (e) {
+      return { ok: false, error: e.message };
+    }
+  });
+  const imgName = (f) => typeof f === 'string' && /^[\w-]+\.(png|jpg|gif|webp|bmp)$/.test(f);
+  ipcMain.handle('img:delete', (_e, file) => {
+    if (!imgName(file)) return false;
+    try {
+      fs.unlinkSync(path.join(imgDir(), file));
+    } catch (e) { /* 이미 없으면 그만 */ }
+    return true;
+  });
+  ipcMain.handle('img:open', (_e, file) => (imgName(file) ? shell.openPath(path.join(imgDir(), file)) : 'bad name'));
   // 컴퓨터 켤 때 창을 띄울지(끄면 트레이에만)
   ipcMain.handle('app:setStartShow', (_e, v) => {
     st.startHidden = !v;
@@ -476,6 +504,9 @@ function start() {
 
   /* ---------- 자동 백업: 문서\Dayline 백업, 최근 30일 ---------- */
   const backupDir = () => path.join(app.getPath('documents'), 'Dayline 백업');
+  function imgDir() {
+    return path.join(app.getPath('userData'), 'images');
+  }
   // 파일 이름: 하루 백업 dayline-YYYYMMDD.json(30개), 되돌리기 직전 백업 dayline-before-YYYYMMDD-HHMMSS.json(5개)
   const BACKUP_RE = /^dayline-(\d{8}|before-\d{8}-\d{6})\.json$/;
   ipcMain.handle('backup:write', (_e, json, kind) => {

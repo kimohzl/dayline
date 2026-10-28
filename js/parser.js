@@ -164,6 +164,21 @@
   const DUE_RE = new RegExp(DUE_DATE_SRC + '(?:\\s*' + TIME_SRC + ')?\\s*(?:까지|마감)');
   const DUE_TIME_RE = new RegExp(TIME_SRC + '\\s*까지');
 
+  // "26일"처럼 날짜 숫자만: 오늘부터 가장 가까운 그 날짜. 이번 달에 지났으면 다음 달, 그 달에 없는 날(31일 등)이면 있는 달까지
+  function nearestMonthDay(d, today) {
+    if (d < 1 || d > 31) return null;
+    for (let i = 0; i < 13; i++) {
+      const y = today.getFullYear();
+      const mo = today.getMonth() + i;
+      const cand = new Date(y, mo, d);
+      if (cand.getDate() !== d) continue; // 그 달에 없는 날
+      if (cand >= today) return cand;
+    }
+    return null;
+  }
+  // 날짜 숫자 뒤에 오면 날짜가 아닌 말(3일 후, 2일간, 1일 1회 …)
+  const DAY_ONLY_SRC = '(?<![\\d/월]\\s*)(\\d{1,2})\\s*일(?!\\s*(?:후|뒤|전|동안|간|째|마다|씩|치|이내|만에|정도|짜리|\\d+\\s*(?:회|번|개|건|커밋))|요일|[0-9])';
+
   function dueDay(word, today) {
     const w = word.replace(/\s+/g, '');
     const mon = (d) => (d + 6) % 7; // 월=0 … 일=6
@@ -194,13 +209,7 @@
       if (cand < addDays(today, -60)) cand = new Date(today.getFullYear() + 1, mo - 1, d);
       return cand;
     }
-    if ((m = /^(\d{1,2})일$/.exec(w))) {
-      const d = +m[1];
-      if (d < 1 || d > 31) return null;
-      let cand = new Date(today.getFullYear(), today.getMonth(), d);
-      if (cand < today) cand = new Date(today.getFullYear(), today.getMonth() + 1, d);
-      return cand;
-    }
+    if ((m = /^(\d{1,2})일$/.exec(w))) return nearestMonthDay(+m[1], today);
     return null;
   }
 
@@ -325,6 +334,13 @@
       if (mo >= 1 && mo <= 12 && d >= 1 && d <= 31) {
         let cand = new Date(today.getFullYear(), mo - 1, d);
         if (cand < today) cand = new Date(today.getFullYear() + 1, mo - 1, d);
+        baseDay = cand;
+        explicitDate = true;
+        spans.push([m.index, m.index + m[0].length]);
+      }
+    } else if ((m = new RegExp(DAY_ONLY_SRC).exec(text))) {
+      const cand = nearestMonthDay(+m[1], today);
+      if (cand) {
         baseDay = cand;
         explicitDate = true;
         spans.push([m.index, m.index + m[0].length]);

@@ -110,11 +110,20 @@ button:disabled { cursor: default; opacity: .45; }
 .m-head p { margin: 4px 0 0; color: var(--muted); font-size: 13px; font-weight: 500; }
 .m-head .icons { display: flex; gap: 0; margin-top: 2px; flex: none; }
 .m-head p { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.chips { display: flex; gap: 6px; padding: 0 16px 12px; overflow-x: auto; scrollbar-width: none; flex: none; }
+/* 프로젝트 칩: 한 줄, 옆으로 넘기기(휠·화살표·끌기). 넘칠 때만 양 끝에 화살표 */
+.chips-wrap { position: relative; flex: none; }
+.chips { display: flex; gap: 6px; padding: 0 16px 12px; overflow-x: auto; scrollbar-width: none; flex: none; scroll-padding: 0 44px; }
 .chips::-webkit-scrollbar { display: none; }
+.chips-nav { position: absolute; top: 0; height: 34px; width: 44px; display: none; align-items: center; color: var(--text-2); z-index: 2; }
+.chips-nav span { width: 28px; height: 28px; border-radius: 50%; display: grid; place-items: center; background: var(--surface); box-shadow: 0 1px 4px rgba(0,0,0,.14); }
+.chips-nav:hover span { color: var(--text); }
+.chips-nav.prev { left: 0; padding-left: 6px; justify-content: flex-start; background: linear-gradient(90deg, var(--bg) 55%, transparent); }
+.chips-nav.next { right: 0; padding-right: 6px; justify-content: flex-end; background: linear-gradient(270deg, var(--bg) 55%, transparent); }
+.chips-wrap.can-l .chips-nav.prev, .chips-wrap.can-r .chips-nav.next { display: flex; }
 .chip {
   height: 34px; padding: 0 14px; border-radius: 17px; background: var(--surface); color: var(--text-2);
   font-size: 14px; font-weight: 500; white-space: nowrap; flex: none; transition: background .15s, box-shadow .15s;
+  max-width: 260px; overflow: hidden; text-overflow: ellipsis;
 }
 .chip:hover { background: #FAFBFC; }
 .chip.on { background: var(--accent); color: #fff; font-weight: 600; }
@@ -822,8 +831,9 @@ html.is-app body { background: var(--bg); }
 .day-h.sun b { color: var(--danger); }
 .day-h.sat b { color: #3B82F6; }
 .tl-list.sched .trow, .mode-big .tl-list.sched .trow { min-height: 40px; padding-top: 5px; padding-bottom: 5px; }
-.tl-list.sched .tb { display: flex; align-items: baseline; gap: 10px; min-width: 0; }
-.tl-list.sched .tt { font-size: 15px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; flex: 0 1 auto; min-width: 0; }
+.tl-list.sched .tb { display: flex; flex-wrap: wrap; align-items: baseline; column-gap: 10px; row-gap: 1px; min-width: 0; }
+/* 한 줄에 다 들어가면 한 줄, 넘치면 프로젝트·마감 줄이 아래로 내려간다. 제목은 길면 두 줄까지 */
+.tl-list.sched .tt { font-size: 15px; flex: 0 1 auto; max-width: 100%; min-width: 0; overflow: hidden; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow-wrap: anywhere; }
 .tl-list.sched .meta { margin-top: 0; flex-wrap: nowrap; white-space: nowrap; overflow: hidden; font-size: 12.5px; flex: 1 1 auto; min-width: 0; }
 .tl-list.sched .tc b { font-size: 14px; color: var(--text-2); }
 .tl-list.sched .cb { width: 20px; height: 20px; }
@@ -1075,3 +1085,44 @@ body:not(.is-dragging) .blk.narrow:not(.drag-ghost):not(:has(.rz:hover)):hover .
 ::-webkit-scrollbar-thumb:hover { background-color: #B0B8C1; }
 ::-webkit-scrollbar-corner { background: transparent; }
 .tc-list::-webkit-scrollbar { width: 6px; }
+/* 프로젝트 순서 바꾸기: 놓을 자리 표시(화면 기준 위치) */
+.drop-line.proj { position: fixed; right: auto; z-index: 60; }
+.drop-line.proj.v { width: 2px; }
+.drop-line.proj.v::before { left: -3px; top: -4px; }
+.sitem[data-drag="proj"], .chip[data-drag="proj"] { touch-action: none; }
+body.is-dragging .sitem[data-drag="proj"] { cursor: grabbing; }
+/* 입력 미리보기 속 작은 버튼(프로젝트 자동 연결 빼기·되돌리기) */
+.qi-hint .hint-btn { display: inline-grid; place-items: center; width: 16px; height: 16px; border-radius: 50%; margin-left: 5px; vertical-align: middle; position: relative; top: -1px; color: var(--muted); background: var(--surface); box-shadow: inset 0 0 0 1px #DDE1E6; }
+.qi-hint .hint-btn:hover { box-shadow: inset 0 0 0 1px #B8BFC7; color: var(--text); }
+.qi-hint .pj.off { color: var(--muted); font-weight: 500; text-decoration: line-through; text-decoration-color: var(--faint); }
+.qi-hint .pj.off i { opacity: .45; }
+/* 미리보기 속 프로젝트 이름은 글자 줄에 그대로 놓는다(inline-flex면 점 때문에 글자 기준선이 어긋남) */
+.qi-hint .pj { display: inline; }
+.qi-hint .pj i { display: inline-block; vertical-align: middle; margin: 0 5px 0 0; position: relative; top: -1px; }
+/* 타임라인에서 끌어 만드는 칸: 들어갈 프로젝트 / 블록 아래 줄의 프로젝트 이름 */
+.qn-pj { font-size: 12px; color: var(--muted); min-height: 0; margin-top: 6px; }
+.qn-pj:empty { display: none; }
+.qn-pj .pj { display: inline; color: var(--text-2); font-weight: 600; }
+.qn-pj .pj i { display: inline-block; vertical-align: middle; margin-right: 5px; position: relative; top: -1px; }
+.blk .bm .bpj { opacity: .85; }
+/* 할 일 상세: 메모 사진 */
+.sh-imgs { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 2px 0 6px 34px; }
+.shimg { position: relative; width: 72px; height: 72px; flex: none; }
+.shimg-v { width: 100%; height: 100%; padding: 0; border-radius: 10px; overflow: hidden; background: var(--soft); box-shadow: inset 0 0 0 1px rgba(0,0,0,.06); cursor: zoom-in; }
+.shimg-v img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.shimg-x { position: absolute; top: -6px; right: -6px; width: 20px; height: 20px; border-radius: 50%; display: grid; place-items: center; background: var(--text); color: #fff; opacity: 0; transition: opacity .12s; box-shadow: 0 0 0 2px var(--surface); }
+.shimg:hover .shimg-x, .shimg-x:focus-visible { opacity: 1; }
+.shimg-add { height: 72px; min-width: 72px; padding: 0 10px; border-radius: 10px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px; font-size: 12px; color: var(--muted); box-shadow: inset 0 0 0 1px #DDE1E6; background: var(--surface); }
+.shimg-add:hover { color: var(--text-2); box-shadow: inset 0 0 0 1px #B8BFC7; }
+.shimg-tip { font-size: 12px; color: var(--faint); }
+.lightbox { position: fixed; inset: 0; z-index: 200; background: rgba(15,20,25,.82); display: flex; align-items: center; justify-content: center; padding: 48px 24px 72px; cursor: zoom-out; }
+.lightbox img { max-width: 100%; max-height: 100%; object-fit: contain; border-radius: 8px; box-shadow: 0 10px 40px rgba(0,0,0,.4); cursor: default; }
+.lb-bar { position: absolute; left: 50%; bottom: 20px; transform: translateX(-50%); display: flex; align-items: center; gap: 6px; padding: 6px; border-radius: 22px; background: rgba(0,0,0,.55); cursor: default; }
+.lb-btn { min-width: 34px; height: 34px; border-radius: 17px; display: grid; place-items: center; color: #fff; }
+.lb-btn.txt { padding: 0 12px; font-size: 13px; font-weight: 600; }
+.lb-btn:hover { background: rgba(255,255,255,.15); }
+.lb-n { color: rgba(255,255,255,.85); font-size: 13px; padding: 0 4px; }
+/* 할 일 입력칸 지우기(×): 글자나 프로젝트 칩이 있을 때만 */
+.qi-clear { width: 24px; height: 24px; flex: none; border-radius: 50%; display: none; place-items: center; color: #fff; background: #C4CAD1; margin-right: 8px; }
+.qi-clear.on { display: grid; }
+.qi-clear:hover { background: #9AA3AD; }

@@ -122,6 +122,7 @@
     chevDown: '<path d="m6 9 6 6 6-6"/>',
     chevRight: '<path d="m9 18 6-6-6-6"/>',
     chevLeft: '<path d="m15 18-6-6 6-6"/>',
+    undo: '<path d="M9 14 4 9l5-5"/><path d="M4 9h10.5a5.5 5.5 0 0 1 0 11H11"/>',
     grip: '<circle cx="9" cy="6" r="1"/><circle cx="9" cy="12" r="1"/><circle cx="9" cy="18" r="1"/><circle cx="15" cy="6" r="1"/><circle cx="15" cy="12" r="1"/><circle cx="15" cy="18" r="1"/>',
     minus: '<path d="M5 12h14"/>',
     x: '<path d="M18 6 6 18"/><path d="m6 6 12 12"/>',
@@ -132,6 +133,7 @@
     clock: '<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>',
     calendar: '<rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4M8 2v4M3 10h18"/>',
     note: '<path d="M4 6h16M4 12h16M4 18h10"/>',
+    image: '<rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="9" cy="9" r="2"/><path d="m21 15-3.1-3.1a2 2 0 0 0-2.8 0L6 21"/>',
     trash: '<path d="M3 6h18"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>',
     pencil: '<path d="M21.17 6.81a1 1 0 0 0-3.99-3.99L3.84 16.17a2 2 0 0 0-.5.83l-1.32 4.35a.5.5 0 0 0 .62.62l4.35-1.32a2 2 0 0 0 .83-.5z"/>',
     download: '<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="m7 10 5 5 5-5"/><path d="M12 15V3"/>',
@@ -714,6 +716,7 @@
     }
     if (t.repeat) parts.push(`<span class="rep">${icon('repeat', 13)}${repLabel(t)}</span>`);
     if (t.memo) parts.push(`<span class="memo">${icon('note', 13)}메모</span>`);
+    if (t.images && t.images.length) parts.push(`<span class="memo">${icon('image', 13)}사진 ${t.images.length}</span>`);
     if (!parts.length) return '';
     return `<div class="meta">${parts.join('<span class="sep">·</span>')}</div>`;
   }
@@ -924,6 +927,7 @@
         <div class="qi-box">
           ${draftProjChip()}
           <input data-keep="quick-${mode}" class="qi-input" autocomplete="off" spellcheck="false" placeholder="${ui.draftProject ? '할 일 입력' : '할 일 입력 · #으로 프로젝트 고르기'}" value="${esc(ui.draft)}">
+          <button class="qi-clear${ui.draft || ui.draftProject ? ' on' : ''}" type="button" data-act="qi-clear" data-keepfocus title="지우기" aria-label="입력 지우기">${icon('x', 14)}</button>
           <button class="send" type="submit" aria-label="추가">${icon('up', 20)}</button>
         </div>
       </form>`;
@@ -935,6 +939,18 @@
     if (first && first !== p.name && first.length >= 2) kws.add(first);
     (p.keywords || []).forEach((k) => k.trim() && kws.add(k.trim()));
     return [...kws];
+  }
+  // "#모바일"처럼 쓴 이름으로 기존 프로젝트(모바일앱) 찾기: 같은 이름 → 첫 단어·자동 연결 단어 → 그 글자로 시작하는 프로젝트가 하나뿐일 때.
+  // 못 찾을 때만 새 프로젝트를 만든다.
+  function findProjectByTag(name) {
+    const n = (name || '').trim().toLowerCase();
+    if (!n) return null;
+    let p = S.projects.find((x) => x.name.toLowerCase() === n);
+    if (p) return p;
+    p = S.projects.find((x) => projectKeywords(x).some((k) => k.toLowerCase() === n));
+    if (p) return p;
+    const starts = S.projects.filter((x) => x.name.toLowerCase().replace(/\s+/g, '').startsWith(n.replace(/\s+/g, '')));
+    return starts.length === 1 ? starts[0] : null;
   }
   function matchProject(text) {
     const low = text.toLowerCase();
@@ -964,16 +980,23 @@
     const bits = [];
     if (r.repeat) bits.push(`<b>${P.repeatLabel(r.repeat, r.date)}${r.start ? ' ' + r.start : ''}${r.end ? ' – ' + r.end : ''} 반복</b> · 첫 회차 ${relDayFull(r.date)}`);
     else if (r.date) bits.push(`<b>${relDayFull(r.date)}${r.start ? ' ' + r.start : ''}${r.end ? ' – ' + r.end : ''}</b>`);
+    if (r.due) bits.push(`마감 <b>${relDayFull(r.due.date)}${r.due.time ? ' ' + r.due.time : ''}까지</b>`);
     if (ui.draftProject && proj(ui.draftProject)) {
       /* 칩으로 고른 프로젝트가 우선 — 따로 안내하지 않는다 */
     } else if (hashState.open) {
       /* 고르는 중 */
     } else if (r.project) {
-      const exists = S.projects.some((p) => p.name === r.project);
-      bits.push(`#${esc(r.project)}${exists ? '' : ' (새 프로젝트)'}`);
+      const tp = findProjectByTag(r.project);
+      bits.push(tp ? `<span class="pj"><i style="--c:${pColor(tp)}"></i>${esc(tp.name)}</span> 프로젝트로` : `#${esc(r.project)} (새 프로젝트)`);
     } else {
+      // 문장 속 단어로 자동 연결된 프로젝트: [빼기]로 이번 입력만 연결하지 않을 수 있다
       const mp = matchProject(v);
-      if (mp) bits.push(`<span class="pj"><i style="--c:${pColor(mp)}"></i>${esc(mp.name)}</span> 프로젝트로`);
+      if (mp && !ui.noAutoPj) {
+        bits.push(`<span class="pj"><i style="--c:${pColor(mp)}"></i>${esc(mp.name)}</span> 프로젝트로<button type="button" class="hint-btn" data-act="qi-auto" data-val="off" data-keepfocus title="이번 할 일은 이 프로젝트에 넣지 않기" aria-label="프로젝트 빼기">${icon('x', 12)}</button>`);
+      } else if (mp) {
+        const fp = S.prefs.filter !== 'all' && S.prefs.filter !== 'none' ? proj(S.prefs.filter) : null;
+        bits.push(`<span class="pj off"><i style="--c:${pColor(mp)}"></i>${esc(mp.name)}</span><button type="button" class="hint-btn" data-act="qi-auto" data-val="on" data-keepfocus title="${esc(mp.name)} 프로젝트로 다시 넣기" aria-label="되돌리기">${icon('undo', 12)}</button>${fp ? ` · <span class="pj"><i style="--c:${pColor(fp)}"></i>${esc(fp.name)}</span> 프로젝트로` : ''}`);
+      }
     }
     if (!bits.length) return '';
     let why = '';
@@ -981,6 +1004,47 @@
     if (r.rule === 'nearest') why = ' · 지금 이후 가장 가까운 시각';
     return bits.join(' · ') + why;
   }
+  // 작은 창 프로젝트 칩: 보던 가로 위치 유지, 고른 칩은 보이게, 넘칠 때만 양 끝 화살표
+  function chipNavState(sc) {
+    const w = sc && sc.closest('[data-chipwrap]');
+    if (!w) return;
+    w.classList.toggle('can-l', sc.scrollLeft > 2);
+    w.classList.toggle('can-r', sc.scrollLeft + sc.clientWidth < sc.scrollWidth - 2);
+  }
+  function syncChips() {
+    const sc = document.querySelector('[data-chips]');
+    if (!sc) return;
+    if (ui.chipsX != null) sc.scrollLeft = ui.chipsX;
+    const on = sc.querySelector('.chip.on');
+    if (on && ui.chipsReveal) {
+      const a = on.offsetLeft - 44;
+      const b = on.offsetLeft + on.offsetWidth + 44 - sc.clientWidth;
+      if (sc.scrollLeft > a) sc.scrollLeft = Math.max(0, a);
+      else if (sc.scrollLeft < b) sc.scrollLeft = b;
+    }
+    ui.chipsReveal = false;
+    chipNavState(sc);
+    if (!sc.clientWidth) requestAnimationFrame(() => sc.isConnected && chipNavState(sc));
+  }
+  document.addEventListener('scroll', (e) => {
+    if (e.target && e.target.matches && e.target.matches('[data-chips]')) {
+      ui.chipsX = e.target.scrollLeft;
+      chipNavState(e.target);
+    }
+  }, true);
+  // 입력 중에 누르는 작은 버튼(미리보기의 [빼기] 등)은 입력칸 커서를 뺏지 않는다
+  document.addEventListener('mousedown', (e) => {
+    if (e.target.closest && e.target.closest('[data-keepfocus]')) e.preventDefault();
+  });
+  // 칩 위에서 마우스 휠을 굴리면 옆으로
+  document.addEventListener('wheel', (e) => {
+    const sc = e.target.closest && e.target.closest('[data-chips]');
+    if (!sc || Math.abs(e.deltaX) > Math.abs(e.deltaY)) return;
+    if (sc.scrollWidth <= sc.clientWidth) return;
+    sc.scrollLeft += e.deltaY;
+    e.preventDefault();
+  }, { passive: false });
+  window.addEventListener('resize', () => chipNavState(document.querySelector('[data-chips]')));
   function updateHints() {
     document.querySelectorAll('[data-hint]').forEach((el) => {
       const h = hintText(ui.draft);
@@ -1013,7 +1077,7 @@
       `<button class="chip${S.prefs.filter === 'all' ? ' on' : ''}" data-act="filter" data-val="all">전체</button>`,
       ...S.projects.map(
         (p) =>
-          `<button class="chip${S.prefs.filter === p.id ? ' on' : ''}" data-act="filter" data-val="${p.id}" data-drop-project="${p.id}" data-edit-project="${p.id}" title="우클릭: 프로젝트 편집" style="--c:${pColor(p)}"><i class="cdot"></i>${esc(p.name)}</button>`,
+          `<button class="chip${S.prefs.filter === p.id ? ' on' : ''}" data-act="filter" data-val="${p.id}" data-drop-project="${p.id}" data-edit-project="${p.id}" data-drag="proj" data-id="${p.id}" title="끌어서 순서 바꾸기 · 우클릭: 프로젝트 편집" style="--c:${pColor(p)}"><i class="cdot"></i>${esc(p.name)}</button>`,
       ),
       '<button class="chip add" data-act="add-project" aria-label="프로젝트 추가">' + icon('plus', 16) + '</button>',
     ].join('');
@@ -1035,7 +1099,11 @@
               <button class="ibtn" data-act="settings" title="설정">${icon('settings')}</button>
             </div>
           </header>
-          <div class="chips">${chips}</div>
+          <div class="chips-wrap" data-chipwrap>
+            <button class="chips-nav prev" data-act="chips-nav" data-val="-1" aria-label="앞 프로젝트" tabindex="-1"><span>${icon('chevLeft', 16)}</span></button>
+            <div class="chips" data-chips>${chips}</div>
+            <button class="chips-nav next" data-act="chips-nav" data-val="1" aria-label="다음 프로젝트" tabindex="-1"><span>${icon('chevRight', 16)}</span></button>
+          </div>
           ${banners()}
           <div class="m-scroll" data-scroll="mini-list">${listHtml('mini')}</div>
           ${snackHtml()}
@@ -1062,7 +1130,7 @@
               p.id,
               `<i class="dot" style="--c:${pColor(p)}" data-act="edit-project" data-id="${p.id}" title="색·이름 바꾸기"></i><span class="nm">${esc(p.name)}</span><span class="edit" data-act="edit-project" data-id="${p.id}" title="편집">${icon('pencil', 14)}</span>`,
               openCountFor(p.id),
-              `data-drop-project="${p.id}" data-edit-project="${p.id}"`,
+              `data-drop-project="${p.id}" data-edit-project="${p.id}" data-drag="proj" data-id="${p.id}"`,
             ),
           )
           .join('')}
@@ -1244,14 +1312,28 @@
     const canResize = !b.contPrev && !b.contNext && !b.live;
     const cls = b.kind === 'work' ? `done work${b.live ? ' live' : ''}` : b.kind;
     const lead = b.kind === 'work' ? (t.done && !b.live ? icon('check', 12, 'bc') : icon('play', 11, 'bc bplay')) : t.done ? icon('check', 12, 'bc') : '';
-    return `<div class="blk ${cls}${b.overdue ? ' overdue' : ''}${small}${narrow}${b.overlay ? ' over' : ''}" title="${esc(plainTitle(t))} · ${esc(label)}" style="--c:${c};--lines:${titleLines};--h:${height}px;top:${top}px;height:${height}px;left:calc(${left}% + 2px);width:calc(${width}% - 4px)"
+    return `<div class="blk ${cls}${b.overdue ? ' overdue' : ''}${small}${narrow}${b.overlay ? ' over' : ''}" title="${esc(plainTitle(t))} · ${esc(label)}${p ? ' · ' + esc(p.name) : ''}" style="--c:${c};--lines:${titleLines};--h:${height}px;top:${top}px;height:${height}px;left:calc(${left}% + 2px);width:calc(${width}% - 4px)"
         data-act="open" data-id="${t.id}" data-drag="block" data-day="${dayKeyStr}" data-smin="${b.sMin}" data-emin="${b.eMin}"${b.sid ? ` data-sid="${b.sid}"` : ''}>
         <div class="bt">${lead}<span>${esc(plainTitle(t))}</span>${t.repeat ? icon('repeat', 11, 'brep') : ''}</div>
-        <div class="bm">${label}</div>
+        <div class="bm">${label}${p ? `<span class="bpj"> · ${esc(p.name)}</span>` : ''}</div>
         ${canResize ? `<div class="rz" data-drag="resize" data-id="${t.id}"></div>` : ''}
       </div>`;
   }
   // 타임라인 빈 곳을 끌어서 만든 칸에 할 일 이름을 넣는 작은 창
+  // 끌어 만드는 칸에 쓴 글로 어느 프로젝트에 들어갈지(#이름, 자동 연결, 보고 있는 프로젝트 순)
+  function qnProjectHtml(text) {
+    const v = (text || '').trim();
+    if (!v) return '';
+    const r = P.parse(v, now(), S.settings);
+    let p = null;
+    let isNew = false;
+    if (r.project) {
+      p = findProjectByTag(r.project);
+      if (!p) isNew = true;
+    } else p = matchProject(v) || (S.prefs.filter !== 'all' && S.prefs.filter !== 'none' ? proj(S.prefs.filter) : null);
+    if (isNew) return `#${esc(r.project)} (새 프로젝트)`;
+    return p ? `<span class="pj"><i style="--c:${pColor(p)}"></i>${esc(p.name)}</span> 프로젝트로` : '';
+  }
   function quickNewHtml(q, right) {
     const top = (q.sMin / 60) * HOUR;
     const height = Math.max(20, ((q.eMin - q.sMin) / 60) * HOUR - 2);
@@ -1260,6 +1342,7 @@
       <div class="qn${right ? ' right' : ''}" style="top:${top + Math.min(height, 60) + 4}px" data-nodrag>
         <div class="qn-time">${label}</div>
         <input class="qn-input" data-qn data-keep="tl-new" placeholder="무엇을 했나요 / 할 건가요?" value="${esc(q.text || '')}" autocomplete="off" spellcheck="false">
+        <div class="qn-pj" data-qn-pj>${qnProjectHtml(q.text)}</div>
         <div class="qn-foot">
           ${q.past ? `<button type="button" class="pill${q.done ? ' on' : ''}" data-act="qn-done">${icon('check', 12)}한 일로 완료</button>` : ''}
           <span class="grow"></span>
@@ -1596,6 +1679,7 @@
   function overlays() {
     let h = '';
     if (ui.sheet) h += sheetHtml();
+    if (ui.sheet && ui.lightbox) h += lightboxHtml();
     if (ui.inbox) h += inboxHtml();
     if (ui.modal) h += modalHtml();
     return h;
@@ -1606,6 +1690,7 @@
       text: shownTitle(t), origTitle: shownTitle(t), projectId: t.projectId || '', date: t.date || '', start: t.start || '',
       end: t.end || (t.start && t.duration ? minToHM((hmToMin(t.start) + t.duration) % 1440) : ''), duration: null, endMode: 'end',
       reminder: t.reminder, remCustom: null, memo: t.memo || '', done: t.done,
+      images: (t.images || []).map((x) => Object.assign({}, x)),
       repeatFreq: t.repeat ? t.repeat.freq : 'none',
       repeatDays: t.repeat && t.repeat.days ? [...t.repeat.days] : [],
       due: t.due ? t.due.date : '', dueTime: t.due && t.due.time ? t.due.time : '',
@@ -1904,6 +1989,119 @@
       info.same ? '' : '<button type="button" class="recog-apply" data-act="sh-apply-recog">적용</button>'
     }`;
   }
+  /* ---------- 메모 사진 ---------- */
+  const IMG_MAX = 20;
+  function imgSrc(im) {
+    if (!im) return '';
+    if (im.data) return im.data;
+    return appInfo.imgBase ? appInfo.imgBase + encodeURIComponent(im.file) : '';
+  }
+  function sheetImagesHtml(d) {
+    const imgs = d.images || [];
+    return `<div class="sh-imgs" data-shimgs>
+        ${imgs
+          .map(
+            (im) => `<div class="shimg"><button type="button" class="shimg-v" data-act="img-view" data-id="${im.id}" title="크게 보기"><img src="${esc(imgSrc(im))}" alt="" draggable="false"></button><button type="button" class="shimg-x" data-act="img-del" data-id="${im.id}" title="사진 빼기" aria-label="사진 빼기">${icon('x', 12)}</button></div>`,
+          )
+          .join('')}
+        <button type="button" class="shimg-add" data-act="img-add" title="사진 넣기 · Ctrl+V로 붙여넣거나 창에 끌어다 놓아도 돼요">${icon('image', 17)}<span>${imgs.length ? '추가' : '사진'}</span></button>
+        ${imgs.length ? '' : '<span class="shimg-tip">Ctrl+V로 붙여넣거나 끌어다 놓아도 돼요</span>'}
+      </div>`;
+  }
+  const readDataUrl = (f) =>
+    new Promise((res) => {
+      const fr = new FileReader();
+      fr.onload = () => res(fr.result);
+      fr.onerror = () => res(null);
+      fr.readAsDataURL(f);
+    });
+  // 브라우저에서는 저장 공간이 작아서 긴 변 1600px JPEG로 줄여 넣는다(앱은 원본을 파일로)
+  function shrinkDataUrl(data) {
+    return new Promise((res) => {
+      const im = new Image();
+      im.onload = () => {
+        const k = Math.min(1, 1600 / Math.max(im.width, im.height));
+        const c = document.createElement('canvas');
+        c.width = Math.round(im.width * k);
+        c.height = Math.round(im.height * k);
+        c.getContext('2d').drawImage(im, 0, 0, c.width, c.height);
+        res(c.toDataURL('image/jpeg', 0.85));
+      };
+      im.onerror = () => res(null);
+      im.src = data;
+    });
+  }
+  async function addSheetImages(list) {
+    const sh = ui.sheet;
+    if (!sh) return;
+    const d = sh.d;
+    d.images = d.images || [];
+    sh.added = sh.added || [];
+    let skipped = 0;
+    let failed = 0;
+    for (const f of list) {
+      if (!f || !(f.type || '').startsWith('image/')) continue;
+      if (d.images.length >= IMG_MAX) {
+        skipped++;
+        continue;
+      }
+      const data = await readDataUrl(f);
+      if (!data) {
+        failed++;
+        continue;
+      }
+      if (APP && APP.saveImage) {
+        const r = await APP.saveImage(data);
+        if (!r || !r.ok) {
+          failed++;
+          logError(`사진 저장 실패: ${(r && r.error) || ''}`);
+          continue;
+        }
+        sh.added.push(r.file);
+        d.images.push({ id: uid(), file: r.file });
+      } else {
+        const small = await shrinkDataUrl(data);
+        if (!small) {
+          failed++;
+          continue;
+        }
+        d.images.push({ id: uid(), data: small });
+      }
+    }
+    if (skipped) snack(`사진은 할 일 하나에 ${IMG_MAX}장까지예요`);
+    else if (failed) snack('사진을 넣지 못했어요');
+    if (ui.sheet === sh) render();
+  }
+  // 상세를 저장하지 않고 닫으면, 이번에 넣은 사진 파일 중 어디에도 안 쓰인 것은 지운다
+  function dropUnsavedImages(sh) {
+    if (!sh || !sh.added || !sh.added.length || !APP || !APP.deleteImage) return;
+    const used = new Set();
+    S.tasks.forEach((t) => (t.images || []).forEach((im) => im.file && used.add(im.file)));
+    sh.added.filter((f) => !used.has(f)).forEach((f) => APP.deleteImage(f));
+    sh.added = [];
+  }
+  function closeSheet() {
+    const sh = ui.sheet;
+    ui.sheet = null;
+    ui.lightbox = null;
+    dropUnsavedImages(sh);
+  }
+  function lightboxHtml() {
+    const lb = ui.lightbox;
+    const d = ui.sheet && ui.sheet.d;
+    const im = d && (d.images || []).find((x) => x.id === lb.id);
+    if (!im) return '';
+    const i = d.images.indexOf(im);
+    const n = d.images.length;
+    return `<div class="lightbox" data-act="lb-close">
+        <img src="${esc(imgSrc(im))}" alt="" data-nodrag>
+        <div class="lb-bar">
+          ${n > 1 ? `<button type="button" class="lb-btn" data-act="lb-step" data-val="-1" aria-label="이전 사진">${icon('chevLeft', 18)}</button><span class="lb-n">${i + 1} / ${n}</span><button type="button" class="lb-btn" data-act="lb-step" data-val="1" aria-label="다음 사진">${icon('chevRight', 18)}</button>` : ''}
+          ${APP && APP.openImage && im.file ? `<button type="button" class="lb-btn txt" data-act="lb-open">원본 열기</button>` : ''}
+          <button type="button" class="lb-btn" data-act="lb-close" aria-label="닫기">${icon('x', 18)}</button>
+        </div>
+      </div>`;
+  }
   function sheetHtml() {
     const d = ui.sheet.d;
     const t = findTask(ui.sheet.id);
@@ -1983,6 +2181,7 @@
           </div>
           <div class="rem-line" data-remline>${icon('bell', 14)}<span>${remLine(d)}</span></div>
           <label class="srow top">${icon('note')}<textarea data-bind="memo" data-keep="sh-memo" rows="2" placeholder="메모 추가">${esc(d.memo)}</textarea></label>
+          ${sheetImagesHtml(d)}
         </div>
         ${
           ask
@@ -2250,7 +2449,8 @@
       else if (r.date) chips.push(relDayFull(r.date));
       if (r.start) chips.push(r.end ? `${r.start}–${r.end}` : r.start);
       if (r.due) chips.push(`${relDayFull(r.due.date)}${r.due.time ? ' ' + r.due.time : ''}까지`);
-      const pj = r.project || (matchProject(text) && matchProject(text).name);
+      const tagP = r.project ? findProjectByTag(r.project) : null;
+      const pj = (tagP && tagP.name) || r.project || (matchProject(text) && matchProject(text).name);
       if (pj) chips.push('#' + pj);
       const on = m.off && key in m.off ? !m.off[key] : kind === 'ok' && !dup;
       out.push({ key, text, title: plainTitle(pv), chips, kind, dup, on, idx });
@@ -2353,6 +2553,8 @@
     } catch (e) { /* time/date 입력은 커서 위치가 없음 */ }
     const scroll = {};
     app.querySelectorAll('[data-scroll]').forEach((el) => (scroll[el.dataset.scroll] = el.scrollTop));
+    const chipsEl = app.querySelector('[data-chips]');
+    if (chipsEl) ui.chipsX = chipsEl.scrollLeft;
 
     app.className = (ui.quit || ui.hidden ? 'mode-desk' : 'mode-' + S.prefs.mode) + (APP ? ' is-app' : '');
     app.innerHTML = ui.quit ? renderQuit() : ui.hidden ? renderHidden() : S.prefs.mode === 'mini' ? renderMini() : renderBig();
@@ -2384,6 +2586,7 @@
         ui.sheet.restoreScroll = false;
       }
     });
+    syncChips();
     if (hashState.open) {
       const qi = document.activeElement && document.activeElement.classList.contains('qi-input') ? document.activeElement : null;
       if (qi) updateHash(qi);
@@ -2451,13 +2654,13 @@
     if (opts && opts.projectId && proj(opts.projectId)) {
       pid = opts.projectId;
     } else if (r.project) {
-      let p = S.projects.find((x) => x.name === r.project);
+      let p = findProjectByTag(r.project);
       if (!p) {
         p = { id: uid(), name: r.project, color: nextColor() };
         S.projects.push(p);
       }
       pid = p.id;
-    } else if (matchProject(v)) {
+    } else if (!(opts && opts.noAuto) && matchProject(v)) {
       pid = matchProject(v).id;
     } else if (S.prefs.filter !== 'all' && S.prefs.filter !== 'none' && !(opts && opts.noFilter)) {
       pid = S.prefs.filter;
@@ -2474,8 +2677,11 @@
     return t;
   }
   function addFromInput() {
-    const t0 = createTask(ui.draft, { projectId: ui.draftProject });
-    if (t0) ui.draftProject = null;
+    const t0 = createTask(ui.draft, { projectId: ui.draftProject, noAuto: ui.noAutoPj });
+    if (t0) {
+      ui.draftProject = null;
+      ui.noAutoPj = false;
+    }
     if (!t0) return;
     const t = t0.repeat ? inst(t0, t0.date) : t0;
     ui.draft = '';
@@ -2572,6 +2778,8 @@
       t.reminder = d.reminder;
     }
     t.memo = d.memo;
+    if (d.images && d.images.length) t.images = d.images.map((x) => Object.assign({}, x));
+    else delete t.images;
     const rp = allowRepeat ? draftRepeat(d) : null;
     if (rp) {
       if (!t.date) t.date = todayKey();
@@ -2700,7 +2908,7 @@
     } else {
       S.tasks.splice(S.tasks.indexOf(t), 1);
     }
-    ui.sheet = null;
+    closeSheet();
     if (ui.prompt && ui.prompt.id === id) ui.prompt = null;
     snack(msg, { undo: { snap } });
     commit();
@@ -3001,6 +3209,7 @@
         ['내일 10시반 / 10:30 / 10시 30분', '시간 쓰는 방법은 다 돼요'],
         ['모레 · 금요일 · 다음주 수요일', '가까운 그날'],
         ['10/30 · 10월 30일', '그 날짜'],
+        ['26일 회의', '가장 가까운 26일 · 이번 달에 지났으면 다음 달'],
         ['3시-4시 · 15:00~16:00 · 3시부터 4시까지', '시작과 끝'],
         ['30분 후 · 1시간 뒤', '지금부터'],
       ])}
@@ -3019,6 +3228,7 @@
         <li>마우스를 올리면 오른쪽에 <b>▶ 시작 · ⏰ 미루기 · 삭제 · 끌기 손잡이</b>. 미루기는 30분·1시간·2시간 뒤나 내일로 옮기고 알림도 같이 옮겨요.</li>
         <li>'할 일' 제목 옆 <b>오늘 남은 N개 내일로</b>로 한 번에 미룰 수 있어요.</li>
         <li>할 일을 누르면 상세: 프로젝트·날짜(<b>내일로</b> 버튼)·시간·마감·반복·알림·메모. 반복 일정은 <b>이번만 / 앞으로 전부</b>를 골라 바꿔요.</li>
+        <li>메모 아래 <b>사진</b>을 눌러 사진을 넣어요. 상세가 열린 채로 <b>Ctrl+V</b>로 캡처를 붙여넣거나 사진 파일을 끌어다 놓아도 돼요. 사진을 누르면 크게 보여요.</li>
         <li>시간 없는 할 일은 끌어서 순서를 바꾸고, 왼쪽 프로젝트 위에 놓으면 그 프로젝트로 옮겨요.</li>
       </ul>`],
     ['work', '작업 시간', `
@@ -3061,6 +3271,7 @@
         <li><b>Ctrl + Shift + Space</b>: 어디서든 Dayline을 띄우고 바로 입력.</li>
         <li>설정 → 창 → <b>컴퓨터 켤 때</b>: 안 켜기 / 트레이에만 / 창 열기.</li>
         <li>프로젝트 이름·색·자동 연결 단어는 왼쪽 프로젝트를 우클릭하거나 색 점을 눌러 바꿔요.</li>
+        <li>프로젝트 순서는 왼쪽 목록(작은 창에서는 위쪽 칩)을 끌어서 바꿔요.</li>
       </ul>`],
     ['data', '데이터·백업', `
       <ul>
@@ -3350,7 +3561,7 @@
     const f = S.prefs.filter;
     if (f && f !== 'all' && f !== 'none' && !S.projects.some((p) => p.id === f)) S.prefs.filter = 'all';
     ui.modal = null;
-    ui.sheet = null;
+    closeSheet();
     snack(`${label} 백업으로 되돌렸어요`, { undo: { full: snap }, until: Date.now() + 10000 });
     commit();
   }
@@ -3465,9 +3676,27 @@
       } else if (v) snack('완료했어요 · 타임라인에 기록돼요');
       commit();
     },
+    'qi-clear': (el) => {
+      ui.draft = '';
+      ui.draftProject = null;
+      ui.noAutoPj = false;
+      if (hashState.open) closeHash();
+      render();
+      const inp = document.querySelector('.qi-input');
+      if (inp) inp.focus();
+    },
+    'qi-auto': (el) => {
+      ui.noAutoPj = el.dataset.val === 'off';
+      updateHints();
+    },
     filter: (el) => {
       S.prefs.filter = el.dataset.val;
+      ui.chipsReveal = true;
       commit();
+    },
+    'chips-nav': (el) => {
+      const sc = document.querySelector('[data-chips]');
+      if (sc) sc.scrollBy({ left: +el.dataset.val * Math.max(120, sc.clientWidth * 0.7), behavior: 'smooth' });
     },
     fold: (el) => {
       const k = el.dataset.val;
@@ -3482,7 +3711,7 @@
       S.prefs.mode = el.dataset.val;
       if (el.dataset.view) S.prefs.view = el.dataset.view;
       if (APP) APP.setMode(S.prefs.mode);
-      ui.sheet = null;
+      closeSheet();
       ui.inbox = false;
       ui.modal = null;
       commit();
@@ -3499,7 +3728,7 @@
     },
     inbox: () => {
       ui.inbox = !ui.inbox;
-      ui.sheet = null;
+      closeSheet();
       render();
     },
     'inbox-ack': (el) => {
@@ -3632,8 +3861,37 @@
       render();
     },
     'sheet-close': () => {
-      ui.sheet = null;
+      closeSheet();
       render();
+    },
+    'img-add': () => document.getElementById('file-img').click(),
+    'img-del': (el) => {
+      const d = ui.sheet && ui.sheet.d;
+      if (!d) return;
+      d.images = (d.images || []).filter((x) => x.id !== el.dataset.id);
+      render();
+    },
+    'img-view': (el) => {
+      ui.lightbox = { id: el.dataset.id };
+      render();
+    },
+    'lb-close': (el, e) => {
+      if (el.classList.contains('lightbox') && e && e.target.closest('img, .lb-bar')) return; // 사진·아래 막대를 누른 건 닫기가 아님
+      ui.lightbox = null;
+      render();
+    },
+    'lb-step': (el) => {
+      const d = ui.sheet && ui.sheet.d;
+      if (!d || !ui.lightbox) return;
+      const n = d.images.length;
+      const i = d.images.findIndex((x) => x.id === ui.lightbox.id);
+      ui.lightbox = { id: d.images[(i + +el.dataset.val + n) % n].id };
+      render();
+    },
+    'lb-open': () => {
+      const d = ui.sheet && ui.sheet.d;
+      const im = d && (d.images || []).find((x) => x.id === (ui.lightbox && ui.lightbox.id));
+      if (im && im.file && APP && APP.openImage) APP.openImage(im.file);
     },
     'sheet-save': saveSheet,
     'sheet-delete': () => deleteTask(ui.sheet.id),
@@ -4112,7 +4370,7 @@
         return;
       }
       ui.hidden = true;
-      ui.sheet = null;
+      closeSheet();
       ui.inbox = false;
       ui.modal = null;
       render();
@@ -4329,8 +4587,24 @@
     if (!f) return;
     e.preventDefault();
     if (ui.modal && ui.modal.type === 'feedback') return addFeedbackFiles([...e.dataTransfer.files]);
+    if (ui.sheet && !ui.modal && [...e.dataTransfer.files].some((x) => (x.type || '').startsWith('image/'))) return addSheetImages([...e.dataTransfer.files]);
     if (/\.(txt|md|markdown|csv|text)$/i.test(f.name) || (f.type || '').startsWith('text/')) readTextFile(f);
     else snack('텍스트 파일(.txt, .md)만 가져올 수 있어요');
+  });
+  // 할 일 상세에서 Ctrl+V: 클립보드에 사진이 있으면 메모 사진으로(글자만 있으면 평소처럼 붙여넣기)
+  document.addEventListener('paste', (e) => {
+    if (!ui.sheet || ui.modal) return;
+    const cd = e.clipboardData;
+    let list = [...((cd && cd.files) || [])].filter((f) => (f.type || '').startsWith('image/'));
+    if (!list.length) {
+      const items = [...((cd && cd.items) || [])].filter((x) => x.kind === 'file' && x.type.startsWith('image/'));
+      const pick = items.find((x) => x.type === 'image/png') || items[0];
+      const f = pick && pick.getAsFile();
+      list = f ? [f] : [];
+    }
+    if (!list.length) return;
+    e.preventDefault();
+    addSheetImages(list);
   });
   // 문제 알리기 창에서 Ctrl+V: 클립보드의 사진·파일(여러 개)을 첨부로
   document.addEventListener('paste', (e) => {
@@ -4462,6 +4736,9 @@
     }
     if (el.classList.contains('qi-input')) {
       ui.draft = el.value;
+      if (!el.value.trim()) ui.noAutoPj = false;
+      const cx = el.parentElement.querySelector('.qi-clear');
+      if (cx) cx.classList.toggle('on', !!el.value || !!ui.draftProject);
       updateHash(el);
       updateHints();
       return;
@@ -4479,6 +4756,8 @@
     }
     if (el.dataset.qn !== undefined && ui.quickNew) {
       ui.quickNew.text = el.value;
+      const pj = el.parentElement.querySelector('[data-qn-pj]');
+      if (pj) pj.innerHTML = qnProjectHtml(el.value);
       return;
     }
     if (el.dataset.hue !== undefined && ui.modal) {
@@ -4514,6 +4793,11 @@
       ui.modal.off = ui.modal.off || {};
       ui.modal.off[el.dataset.im] = !el.checked;
       return render();
+    }
+    if (el.id === 'file-img' && el.files.length) {
+      addSheetImages([...el.files]);
+      el.value = '';
+      return;
     }
     if (el.id === 'file-any' && el.files.length) {
       addFeedbackFiles([...el.files]);
@@ -4608,10 +4892,14 @@
       }
     }
     if (e.key === 'Escape') {
+      if (ui.lightbox && ui.sheet) {
+        ui.lightbox = null;
+        return render();
+      }
       if (ui.quickNew && !ui.modal && !ui.sheet) ui.quickNew = null;
       else if (ui.mpop && !ui.modal && !ui.sheet) ui.mpop = null;
       else if (ui.modal) return ACTIONS['modal-close']();
-      else if (ui.sheet) ui.sheet = null;
+      else if (ui.sheet) closeSheet();
       else if (ui.inbox) ui.inbox = false;
       else if (ui.prompt) ui.prompt = null;
       else return;
@@ -4636,7 +4924,8 @@
     if (e.button !== 0) return;
     const src = e.target.closest('[data-drag]');
     if (!src) return;
-    if (e.target.closest('button, input, select, textarea, [data-nodrag]') && src.dataset.drag !== 'window') return;
+    const blocker = e.target.closest('button, input, select, textarea, [data-nodrag]');
+    if (blocker && blocker !== src && src.dataset.drag !== 'window') return;
     if (src.dataset.drag === 'window' && e.target.closest('button')) return;
     if (src.dataset.drag !== 'window') e.preventDefault(); // 글자 선택 막기
     if (src.dataset.drag === 'create' && (e.target.closest('.qn, .tl-draft, .tl-now') || ui.quickNew)) {
@@ -4685,6 +4974,16 @@
       const g = document.createElement('div');
       g.className = 'drag-ghost row-ghost';
       g.innerHTML = `<i style="--c:${pColor(proj(t && t.projectId))}"></i><span>${esc(t ? plainTitle(t) : '')}</span>`;
+      document.body.appendChild(g);
+      D.ghost = g;
+      D.offX = -14;
+      D.offY = 16;
+      D.src.classList.add('drag-src');
+    } else if (D.type === 'proj') {
+      const p = proj(D.id);
+      const g = document.createElement('div');
+      g.className = 'drag-ghost row-ghost';
+      g.innerHTML = `<i style="--c:${pColor(p)}"></i><span>${esc(p ? p.name : '')}</span>`;
       document.body.appendChild(g);
       D.ghost = g;
       D.offX = -14;
@@ -4766,6 +5065,27 @@
     D.target = null;
     const under = document.elementFromPoint(e.clientX, e.clientY);
     if (!under) return;
+    if (D.type === 'proj') {
+      // 같은 목록(왼쪽 목록 또는 작은 창 칩) 안의 다른 프로젝트 위에서만
+      const box = D.src.parentElement;
+      if (box.matches('[data-chips]')) {
+        const br = box.getBoundingClientRect();
+        if (e.clientX < br.left + 40) box.scrollLeft -= 12;
+        else if (e.clientX > br.right - 40) box.scrollLeft += 12;
+      }
+      const el = under.closest('[data-drag="proj"]');
+      if (!el || el === D.src || el.parentElement !== box) return;
+      const r = el.getBoundingClientRect();
+      const across = el.classList.contains('chip');
+      const after = across ? e.clientX > r.left + r.width / 2 : e.clientY > r.top + r.height / 2;
+      const line = document.createElement('div');
+      line.className = 'drop-line proj' + (across ? ' v' : '');
+      if (across) Object.assign(line.style, { left: (after ? r.right + 3 : r.left - 3) - 1 + 'px', top: r.top + 'px', height: r.height + 'px' });
+      else Object.assign(line.style, { left: r.left + 'px', width: r.width + 'px', top: (after ? r.bottom + 2 : r.top - 2) - 1 + 'px' });
+      document.body.appendChild(line);
+      D.target = { kind: 'proj-order', ref: el.dataset.id, after };
+      return;
+    }
     const t = findTask(D.id);
     if (D.type === 'card' || D.type === 'block') {
       const col = under.closest('.tl-col');
@@ -4853,6 +5173,18 @@
     if (d.type === 'window') {
       if (d.pos) S.prefs.miniPos = d.pos;
       return save();
+    }
+    if (d.type === 'proj') {
+      const g = d.target;
+      if (!g || g.kind !== 'proj-order') return render();
+      const from = S.projects.findIndex((x) => x.id === d.id);
+      if (from < 0) return render();
+      const [moved] = S.projects.splice(from, 1);
+      let to = S.projects.findIndex((x) => x.id === g.ref);
+      if (to < 0) to = S.projects.length;
+      else if (g.after) to += 1;
+      S.projects.splice(to, 0, moved);
+      return commit();
     }
     const t0 = findTask(d.id);
     if (!t0) return render();
@@ -4976,7 +5308,7 @@
     APP.on('set-mode', (m) => {
       if (m !== 'mini' && m !== 'big') return;
       S.prefs.mode = m;
-      ui.sheet = null;
+      closeSheet();
       ui.inbox = false;
       ui.modal = null;
       APP.setMode(m);

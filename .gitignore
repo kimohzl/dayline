@@ -1,0 +1,25 @@
+node_modules/
+release/
+
+# 설치 파일 조각·완성본(용량이 커서 깃에 넣지 않음)
+installer/*.part*
+installer/*.exe
+installer/*.bat
+installer/*.ps1
+
+# 예전에 이 폴더에 앱이 설치됐을 때 남는 실행 파일
+/Dayline.exe
+/Uninstall Dayline.exe
+/uninstallerIcon.ico
+/*.dll
+/*.pak
+/*.dat
+/*.bin
+/vk_swiftshader_icd.json
+/LICENSE.electron.txt
+/LICENSES.chromium.html
+/locales/
+/resources/
+
+# 테스트 스크린샷
+/*.png

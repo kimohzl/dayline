@@ -280,7 +280,42 @@
       ui.saveError = true;
     }
   }
+  /* ---------- 실행 취소: 할 일·프로젝트가 바뀔 때마다 바로 전 상태를 쌓아 둔다 ---------- */
+  const HIST_MAX = 50;
+  const histJSON = () => JSON.stringify({ tasks: S.tasks, projects: S.projects });
+  let histBase = histJSON();
+  const undoStack = [];
+  const redoStack = [];
+  function applyHist(json) {
+    const f = JSON.parse(json);
+    S.tasks.splice(0, S.tasks.length, ...f.tasks);
+    S.projects.splice(0, S.projects.length, ...f.projects);
+    histBase = json;
+    if (S.prefs.project && !S.projects.some((p) => p.id === S.prefs.project)) S.prefs.project = null;
+    if (ui.prompt && !S.tasks.some((t) => t.id === ui.prompt.id)) ui.prompt = null;
+    ui.swipeId = null;
+  }
+  function undoLast(redo) {
+    const from = redo ? redoStack : undoStack;
+    const to = redo ? undoStack : redoStack;
+    if (!from.length) return snack(redo ? '다시 할 게 없어요' : '되돌릴 게 없어요'), render();
+    if (ui.sheet) closeSheet();
+    to.push(histBase);
+    applyHist(from.pop());
+    save();
+    snack(redo ? '다시 했어요' : '되돌렸어요');
+    render();
+  }
   function commit() {
+    const cur = histJSON();
+    if (cur !== histBase) {
+      undoStack.push(histBase);
+      if (undoStack.length > HIST_MAX) undoStack.shift();
+      redoStack.length = 0;
+      histBase = cur;
+      // 방금 띄운 안내(삭제했어요, 옮겼어요 …)에는 되돌리기 버튼을 붙인다
+      if (ui.snack && !ui.snack.undo && performance.now() - (ui.snack.t || 0) < 80) snack(ui.snack.msg, { undo: true });
+    }
     save();
     render();
   }
@@ -330,6 +365,11 @@
     return s && s.repeat ? inst(s, id.slice(i + 1)) : null;
   }
   const proj = (id) => S.projects.find((p) => p.id === id);
+  // 끝낸 프로젝트(p.ended = 끝낸 날짜)는 목록·칩·자동 연결에서 빠지고, 지난 기록에는 이름과 색이 그대로 남는다
+  const liveProjects = () => S.projects.filter((p) => !p.ended);
+  const endedProjects = () => S.projects.filter((p) => p.ended);
+  // 아직 안 끝난 할 일(반복 일정은 이어지는 것 하나로)
+  const openTasksOf = (pid) => S.tasks.filter((t) => t.projectId === pid && (t.repeat ? seriesActive(t) : !t.done));
   const pColor = (p) => colorOf(p && p.color);
   function taskStart(t) {
     if (!t.date || !t.start) return null;
@@ -548,6 +588,12 @@
       }
       const todays = instancesBetween(t, T, addDays(T, 1));
       todays.forEach((i) => !i.done && items.push(i));
+      // 지난 회차를 못 끝냈으면(최근 7일 중 가장 최근 것 하나) 한 번짜리 일처럼 '지남'으로 할 일에 남긴다.
+      // 오늘도 회차가 있는 반복(매일·평일 등)은 오늘 회차가 대신하니 건너뛴다
+      if (!todays.length) {
+        const missed = instancesBetween(t, addDays(T, -7), T).filter((i) => !i.done);
+        if (missed.length) items.push(missed[missed.length - 1]);
+      }
       if (!todays.some((i) => !i.done) && seriesActive(t)) {
         const nx = nextInstance(t, addDays(T, 1));
         if (nx) items.push(nx);
@@ -642,7 +688,8 @@
   function timeCol(t, kind, isNext) {
     if (kind === 'sched') {
       const s0 = taskStart(t);
-      if (dueInTimeCol(t)) return `<div class="tc sdue"><small>${icon('flag', 10)}마감</small><b>${t.due.time || '그날'}</b></div>`;
+      // 마감 시각이 있으면 "⚑ 마감 / 18:00", 없으면 깃발과 "마감"만(날짜는 위 날짜 줄과 D-n으로 보인다)
+      if (dueInTimeCol(t)) return t.due.time ? `<div class="tc sdue"><small>${icon('flag', 10)}마감</small><b>${t.due.time}</b></div>` : `<div class="tc sdue"><b class="due-only">${icon('flag', 13)}마감</b></div>`;
       return `<div class="tc"><b>${s0 ? fmtHM(s0) : '–'}</b></div>`;
     }
     if (kind === 'doing') {
@@ -857,10 +904,12 @@
   const hashState = { open: false, q: '', start: -1, sel: 0, items: [] };
   function hashItems(q) {
     const k = q.trim().toLowerCase();
-    const list = S.projects.filter((p) => !k || p.name.toLowerCase().includes(k) || projectKeywords(p).some((w) => w.toLowerCase().startsWith(k)));
+    const list = liveProjects().filter((p) => !k || p.name.toLowerCase().includes(k) || projectKeywords(p).some((w) => w.toLowerCase().startsWith(k)));
     list.sort((a, b) => (a.name.toLowerCase().startsWith(k) ? 0 : 1) - (b.name.toLowerCase().startsWith(k) ? 0 : 1));
     const items = list.slice(0, 6).map((p) => ({ id: p.id, name: p.name, color: pColor(p) }));
-    if (k && !S.projects.some((p) => p.name.toLowerCase() === k)) items.push({ create: q.trim() });
+    const ended = k && endedProjects().find((p) => p.name.toLowerCase() === k);
+    if (ended) items.push({ id: ended.id, name: ended.name, color: pColor(ended), ended: true });
+    else if (k && !S.projects.some((p) => p.name.toLowerCase() === k)) items.push({ create: q.trim() });
     return items;
   }
   function closeHash() {
@@ -890,7 +939,7 @@
       .map((it, i) =>
         it.create
           ? `<button type="button" class="qm-item${i === hashState.sel ? ' on' : ''}" data-hash="${i}">${icon('plus', 14)}<span>"${esc(it.create)}" 새 프로젝트 만들기</span></button>`
-          : `<button type="button" class="qm-item${i === hashState.sel ? ' on' : ''}" data-hash="${i}"><i style="--c:${it.color}"></i><span>${esc(it.name)}</span></button>`,
+          : `<button type="button" class="qm-item${i === hashState.sel ? ' on' : ''}" data-hash="${i}"><i style="--c:${it.color}"></i><span>${esc(it.name)}</span>${it.ended ? '<small class="muted">끝난 프로젝트 · 다시 열기</small>' : ''}</button>`,
       )
       .join('') + '<p class="qm-hint">↑↓ 고르기 · Enter 선택 · Esc 닫기</p>';
   }
@@ -903,6 +952,7 @@
       S.projects.push(p);
       pid = p.id;
     }
+    if (it.ended) reopenProject(proj(pid));
     const pos = input.selectionStart ?? input.value.length;
     const v = input.value;
     const start = hashState.start;
@@ -947,9 +997,9 @@
     if (!n) return null;
     let p = S.projects.find((x) => x.name.toLowerCase() === n);
     if (p) return p;
-    p = S.projects.find((x) => projectKeywords(x).some((k) => k.toLowerCase() === n));
+    p = liveProjects().find((x) => projectKeywords(x).some((k) => k.toLowerCase() === n));
     if (p) return p;
-    const starts = S.projects.filter((x) => x.name.toLowerCase().replace(/\s+/g, '').startsWith(n.replace(/\s+/g, '')));
+    const starts = liveProjects().filter((x) => x.name.toLowerCase().replace(/\s+/g, '').startsWith(n.replace(/\s+/g, '')));
     return starts.length === 1 ? starts[0] : null;
   }
   function matchProject(text) {
@@ -957,7 +1007,7 @@
     const word = (c) => !!c && /[a-z0-9]/.test(c);
     let best = null;
     let bestLen = 0;
-    for (const p of S.projects) {
+    for (const p of liveProjects()) {
       for (const kw of projectKeywords(p)) {
         const k = kw.toLowerCase();
         if (!k || k.length <= bestLen) continue;
@@ -1057,7 +1107,7 @@
     return `<div class="snack"><span>${esc(ui.snack.msg)}</span>${ui.snack.undo ? '<button data-act="undo">되돌리기</button>' : ''}</div>`;
   }
   function snack(msg, extra) {
-    ui.snack = Object.assign({ msg, until: Date.now() + (extra && extra.undo ? 5000 : 3200) }, extra || {});
+    ui.snack = Object.assign({ msg, t: performance.now(), until: Date.now() + (extra && extra.undo ? 5000 : 3200) }, extra || {});
     const until = ui.snack.until;
     setTimeout(() => {
       if (ui.snack && ui.snack.until === until) {
@@ -1075,7 +1125,7 @@
     const style = pos ? `left:${pos.x}px;top:${pos.y}px` : 'right:48px;top:40px';
     const chips = [
       `<button class="chip${S.prefs.filter === 'all' ? ' on' : ''}" data-act="filter" data-val="all">전체</button>`,
-      ...S.projects.map(
+      ...liveProjects().map(
         (p) =>
           `<button class="chip${S.prefs.filter === p.id ? ' on' : ''}" data-act="filter" data-val="${p.id}" data-drop-project="${p.id}" data-edit-project="${p.id}" data-drag="proj" data-id="${p.id}" title="끌어서 순서 바꾸기 · 우클릭: 프로젝트 편집" style="--c:${pColor(p)}"><i class="cdot"></i>${esc(p.name)}</button>`,
       ),
@@ -1124,7 +1174,7 @@
       <nav>
         <div class="side-label top"><span>프로젝트</span><button class="txt acc" data-act="add-project">+ 프로젝트</button></div>
         ${item('all', `<i class="dot all"></i><span class="nm">전체</span>`, openCountFor('all'))}
-        ${S.projects
+        ${liveProjects()
           .map((p) =>
             item(
               p.id,
@@ -1135,10 +1185,31 @@
           )
           .join('')}
         ${item('none', `<i class="dot none"></i><span class="nm">미지정</span>`, openCountFor('none'), 'data-drop-project=""')}
+        ${endedSideHtml(item)}
       </nav>
       ${S.prefs.view === 'timeline' ? unschedHtml() : ''}
       <button class="side-status ${st.cls}" data-act="settings"><i></i>${st.text}</button>
     </aside>`;
+  }
+  function endedSideHtml(item) {
+    const list = endedProjects();
+    if (!list.length) return '';
+    const open = ui.showEnded || list.some((p) => p.id === S.prefs.filter);
+    return `<button class="side-ended" data-act="ended-toggle">${icon(open ? 'chevDown' : 'chevRight', 14)}끝난 프로젝트 ${list.length}</button>
+      ${
+        open
+          ? list
+              .map((p) =>
+                item(
+                  p.id,
+                  `<i class="dot" style="--c:${pColor(p)}"></i><span class="nm">${esc(p.name)}</span><span class="edit" data-act="edit-project" data-id="${p.id}" title="편집·다시 열기">${icon('pencil', 14)}</span>`,
+                  '',
+                  `data-edit-project="${p.id}" data-ended`,
+                ),
+              )
+              .join('')
+          : ''
+      }`;
   }
   function renderBig() {
     const isList = S.prefs.view === 'list';
@@ -1312,9 +1383,9 @@
     const canResize = !b.contPrev && !b.contNext && !b.live;
     const cls = b.kind === 'work' ? `done work${b.live ? ' live' : ''}` : b.kind;
     const lead = b.kind === 'work' ? (t.done && !b.live ? icon('check', 12, 'bc') : icon('play', 11, 'bc bplay')) : t.done ? icon('check', 12, 'bc') : '';
-    return `<div class="blk ${cls}${b.overdue ? ' overdue' : ''}${small}${narrow}${b.overlay ? ' over' : ''}" title="${esc(plainTitle(t))} · ${esc(label)}${p ? ' · ' + esc(p.name) : ''}" style="--c:${c};--lines:${titleLines};--h:${height}px;top:${top}px;height:${height}px;left:calc(${left}% + 2px);width:calc(${width}% - 4px)"
+    return `<div class="blk ${cls}${b.overdue ? ' overdue' : ''}${small}${narrow}${b.overlay ? ' over' : ''}" title="${esc(shownTitle(t))} · ${esc(label)}${p ? ' · ' + esc(p.name) : ''}" style="--c:${c};--lines:${titleLines};--h:${height}px;top:${top}px;height:${height}px;left:calc(${left}% + 2px);width:calc(${width}% - 4px)"
         data-act="open" data-id="${t.id}" data-drag="block" data-day="${dayKeyStr}" data-smin="${b.sMin}" data-emin="${b.eMin}"${b.sid ? ` data-sid="${b.sid}"` : ''}>
-        <div class="bt">${lead}<span>${esc(plainTitle(t))}</span>${t.repeat ? icon('repeat', 11, 'brep') : ''}</div>
+        <div class="bt">${lead}<span>${esc(shownTitle(t))}</span>${t.repeat ? icon('repeat', 11, 'brep') : ''}</div>
         <div class="bm">${label}${p ? `<span class="bpj"> · ${esc(p.name)}</span>` : ''}</div>
         ${canResize ? `<div class="rz" data-drag="resize" data-id="${t.id}"></div>` : ''}
       </div>`;
@@ -1436,6 +1507,11 @@
     return cells;
   }
   /* ---------- 옆 달력(큰 화면 목록) ---------- */
+  // 옆 달력의 그날 목록: 줄 오른쪽에 프로젝트(색 점 + 이름)
+  function cpProj(t) {
+    const p = proj(t.projectId);
+    return p ? `<small class="cp-pj" title="${esc(p.name)}"><i style="--c:${pColor(p)}"></i>${esc(p.name)}</small>` : '';
+  }
   function calPaneHtml() {
     const T = startOfDay(now());
     const tk = dateKey(T);
@@ -1465,18 +1541,18 @@
     const sd = fromKey(sel);
     const startKey = (t) => t.start || '99:99';
     const rows = [
-      ...sc.due.map((t) => `<button class="cp-it due${dueOver(t) ? ' red' : ''}" data-act="open" data-id="${t.id}"><b>${icon('flag', 11)}${t.due.time || '마감'}</b><span>${esc(plainTitle(t))}</span></button>`),
+      ...sc.due.map((t) => `<button class="cp-it due${dueOver(t) ? ' red' : ''}" data-act="open" data-id="${t.id}"><b>${icon('flag', 11)}${t.due.time || '마감'}</b><span>${esc(shownTitle(t))}</span>${cpProj(t)}</button>`),
       ...[...sc.plan]
         .sort((a, b) => startKey(a).localeCompare(startKey(b)))
-        .map((t) => `<button class="cp-it" style="--c:${pColor(proj(t.projectId))}" data-act="open" data-id="${t.id}"><b>${t.start || '–'}</b><i></i><span>${esc(plainTitle(t))}</span></button>`),
-      ...[...sc.done.values()].map((t) => `<button class="cp-it did" data-act="open" data-id="${t.id}"><b>${icon(t.done ? 'check' : 'play', 11)}</b><span>${esc(plainTitle(t))}</span></button>`),
+        .map((t) => `<button class="cp-it" data-act="open" data-id="${t.id}"><b>${t.start || '–'}</b><span>${esc(shownTitle(t))}</span>${cpProj(t)}</button>`),
+      ...[...sc.done.values()].map((t) => `<button class="cp-it did" data-act="open" data-id="${t.id}"><b>${icon(t.done ? 'check' : 'play', 11)}</b><span>${esc(shownTitle(t))}</span>${cpProj(t)}</button>`),
     ].join('');
     const rel = { 0: '오늘', 1: '내일', '-1': '어제' }[Math.round((sd - T) / 864e5)];
     return `<aside class="calpane">
         <div class="cp-head"><b>${y}년 ${mo + 1}월</b><span class="grow"></span>
-          <button class="ibtn" data-act="cal-move" data-val="-1" aria-label="이전 달">${icon('chevLeft', 16)}</button>
+          <button class="ibtn" data-act="cp-move" data-val="-1" aria-label="이전 달">${icon('chevLeft', 16)}</button>
           <button class="cp-today" data-act="cal-today">오늘</button>
-          <button class="ibtn" data-act="cal-move" data-val="1" aria-label="다음 달">${icon('chevRight', 16)}</button></div>
+          <button class="ibtn" data-act="cp-move" data-val="1" aria-label="다음 달">${icon('chevRight', 16)}</button></div>
         <div class="cp-week">${[...WEEK].map((w, i) => `<span class="${i === 0 ? 'sun' : i === 6 ? 'sat' : ''}">${w}</span>`).join('')}</div>
         <div class="cp-grid">${grid}</div>
         <div class="cp-day">
@@ -1524,18 +1600,18 @@
         const items = [
           ...c.due.map((t) => {
             const over = dueOver(t);
-            return `<div class="mi due${over ? ' red' : ''}" data-act="open" data-id="${t.id}" data-drag="card" data-due="1" title="${esc(plainTitle(t))} · ${esc(dueText(t))}">${icon('flag', 11)}<span>${esc(plainTitle(t))}</span></div>`;
+            return `<div class="mi due${over ? ' red' : ''}" data-act="open" data-id="${t.id}" data-drag="card" data-due="1" title="${esc(shownTitle(t))} · ${esc(dueText(t))}">${icon('flag', 11)}<span>${esc(shownTitle(t))}</span></div>`;
           }),
           ...c.plan.map((t) => {
             const p = proj(t.projectId);
             const rep = !!t.seriesId;
-            return `<div class="mi${rep ? ' rep' : ''}${workingOn(t) ? ' doing' : ''}" style="--c:${pColor(p)}" data-act="open" data-id="${t.id}" data-drag="card" title="${esc(plainTitle(t))}${t.start ? ' · ' + t.start : ''}${rep ? ' · ' + repLabel(seriesOf(t)) : ''}"><i></i>${t.start ? `<b>${t.start}</b>` : ''}<span>${esc(plainTitle(t))}</span></div>`;
+            return `<div class="mi${rep ? ' rep' : ''}${workingOn(t) ? ' doing' : ''}" style="--c:${pColor(p)}" data-act="open" data-id="${t.id}" data-drag="card" title="${esc(shownTitle(t))}${t.start ? ' · ' + t.start : ''}${rep ? ' · ' + repLabel(seriesOf(t)) : ''}"><i></i>${t.start ? `<b>${t.start}</b>` : ''}<span>${esc(shownTitle(t))}</span></div>`;
           }),
           // 한 일: 그날 완료한 일(✓)과 작업 기록만 있는 일(▶)
           ...[...c.done.values()].map((t) => {
             const p = proj(t.projectId);
             const tip = t.done ? '완료' : '작업함';
-            return `<div class="mi did" style="--c:${pColor(p)}" data-act="open" data-id="${t.id}" title="${esc(plainTitle(t))} · ${tip}">${icon(t.done ? 'check' : 'play', 11)}<span>${esc(plainTitle(t))}</span></div>`;
+            return `<div class="mi did" style="--c:${pColor(p)}" data-act="open" data-id="${t.id}" title="${esc(shownTitle(t))} · ${tip}">${icon(t.done ? 'check' : 'play', 11)}<span>${esc(shownTitle(t))}</span></div>`;
           }),
         ];
         const MAX = 3;
@@ -1626,7 +1702,7 @@
               const it = sameDay(d, n);
               const dk = dateKey(d);
               const dues = S.tasks.filter((t) => t.due && !t.done && !t.repeat && t.due.date === dk && matchesFilter(t));
-              const dueTip = dues.map((t) => plainTitle(t)).join(', ');
+              const dueTip = dues.map((t) => shownTitle(t)).join(', ');
               const rz = isWeek && d.getDay() < 6 ? `<i class="col-rz" data-drag="colrz" data-i="${d.getDay()}" title="끌어서 너비 바꾸기 · 두 번 누르면 원래대로"></i>` : '';
               return `<div class="dh${it ? ' today' : ''}${isWeek ? ' link' : ''}" ${isWeek ? `data-act="tl-day" data-val="${dk}" title="이날 크게 보기"` : ''}>${rz}<span>${WEEK[d.getDay()]}</span><b>${d.getDate()}</b>${
                 dues.length ? `<em class="dh-due${dues.some(dueOver) ? ' red' : ''}" title="${esc(dueTip)}">${icon('flag', 11)}마감 ${dues.length}</em>` : ''
@@ -1661,7 +1737,7 @@
         items
           .map((t) => {
             const p = proj(t.projectId);
-            return `<div class="ucard" data-drag="card" data-act="open" data-id="${t.id}"><i style="--c:${pColor(p)}"></i><span>${esc(plainTitle(t))}</span>${
+            return `<div class="ucard" data-drag="card" data-act="open" data-id="${t.id}"><i style="--c:${pColor(p)}"></i><span>${esc(shownTitle(t))}</span>${
               workingOn(t)
                 ? '<small class="ws on"><i></i>작업 중</small>'
                 : t.sessions && t.sessions.length && !t.done
@@ -1775,7 +1851,7 @@
       const cls = [k === sel ? 'on' : '', k === tk ? 'today' : '', dd.getDay() === 0 ? 'sun' : ''].join(' ').trim();
       cells += `<button type="button" class="${cls}" data-act="pick-date" data-key="${key}" data-val="${k}">${n}</button>`;
     }
-    return `<div class="pk" data-nodrag>
+    return `<div class="pk" data-pk="date-${key}" data-nodrag>
         <div class="pk-quick">${quick
           .map(([l, k]) => `<button type="button" class="pill${sel === k ? ' on' : ''}" data-act="pick-date" data-key="${key}" data-val="${k}">${l}</button>`)
           .join('')}</div>
@@ -1888,7 +1964,7 @@
     const curDur = d.start && d.end ? (hmToMin(d.end) - hmToMin(d.start) + 1440) % 1440 : null;
     const s0 = draftStart(d);
     const past = !!(s0 && d.end && new Date(s0.getTime() + curDur * 60000) <= now());
-    return `<div class="pk tp" data-nodrag>
+    return `<div class="pk tp" data-pk="range" data-nodrag>
         <div class="tp-row">
           ${tcombo('start', d.start, { placeholder: '시작' })}
           <span class="tp-arrow">${icon('chevRight', 14)}</span>
@@ -1902,7 +1978,7 @@
       </div>`;
   }
   function timePicker(v, key) {
-    return `<div class="pk tp" data-nodrag><div class="tp-row">${tcombo(key, v, { placeholder: '마감 시각' })}</div></div>`;
+    return `<div class="pk tp" data-pk="time-${key}" data-nodrag><div class="tp-row">${tcombo(key, v, { placeholder: '마감 시각' })}</div></div>`;
   }
   // 고른 시간을 제자리에 넣는다
   function tcApply(id, v) {
@@ -2004,8 +2080,11 @@
             (im) => `<div class="shimg"><button type="button" class="shimg-v" data-act="img-view" data-id="${im.id}" title="크게 보기"><img src="${esc(imgSrc(im))}" alt="" draggable="false"></button><button type="button" class="shimg-x" data-act="img-del" data-id="${im.id}" title="사진 빼기" aria-label="사진 빼기">${icon('x', 12)}</button></div>`,
           )
           .join('')}
-        <button type="button" class="shimg-add" data-act="img-add" title="사진 넣기 · Ctrl+V로 붙여넣거나 창에 끌어다 놓아도 돼요">${icon('image', 17)}<span>${imgs.length ? '추가' : '사진'}</span></button>
-        ${imgs.length ? '' : '<span class="shimg-tip">Ctrl+V로 붙여넣거나 끌어다 놓아도 돼요</span>'}
+        ${
+          imgs.length
+            ? `<button type="button" class="shimg-add tile" data-act="img-add" title="사진 더 넣기 · Ctrl+V로 붙여넣거나 끌어다 놓아도 돼요" aria-label="사진 더 넣기">${icon('plus', 18)}</button>`
+            : `<button type="button" class="shimg-add" data-act="img-add" title="Ctrl+V로 붙여넣거나 끌어다 놓아도 돼요">${icon('image', 15)}<span>사진 추가</span></button>`
+        }
       </div>`;
   }
   const readDataUrl = (f) =>
@@ -2142,6 +2221,7 @@
           <div class="pills proj">
             <button type="button" class="pill${!d.projectId ? ' on' : ''}" data-act="sh-proj" data-val="">없음</button>
             ${S.projects
+              .filter((p) => !p.ended || p.id === d.projectId)
               .map((p) => `<button type="button" class="pill pj-pill${d.projectId === p.id ? ' on' : ''}" style="--c:${pColor(p)}" data-act="sh-proj" data-val="${p.id}"><i></i>${esc(p.name)}</button>`)
               .join('')}
           </div>
@@ -2229,7 +2309,7 @@
   function workEditor(t, w) {
     const s = new Date(w.s);
     const e = w.e ? new Date(w.e) : null;
-    return `<div class="pk we tp" data-nodrag>
+    return `<div class="pk we tp" data-pk="we-${esc(String(w.s))}" data-nodrag>
         <div class="tp-row">
           ${tcombo(`ws:${w.id}:s`, fmtHM(s), { placeholder: '시작' })}
           <span class="tp-arrow">${icon('chevRight', 14)}</span>
@@ -2347,6 +2427,17 @@
             <div class="sg-row"><span>실행 상태</span><span class="sg-val">${info.text}</span></div>
             <p class="sg-help">알림이 안 보이면 Windows 설정 → 시스템 → 알림에서 Dayline이 켜져 있는지, 방해 금지 모드가 꺼져 있는지 확인해 주세요.</p>
           </div></div>
+        <div class="sgroup"><div class="sg-label">화면</div>
+          <div class="sg-card">
+            <div class="sg-row"><span>테마</span><div class="seg">${[
+              ['system', '시스템'],
+              ['light', '밝게'],
+              ['dark', '어둡게'],
+            ]
+              .map(([v, l]) => `<button class="${(S.prefs.theme || 'system') === v ? 'on' : ''}" data-act="theme" data-val="${v}">${l}</button>`)
+              .join('')}</div></div>
+            <p class="sg-help">시스템: ${APP ? 'Windows' : '기기'} 설정(밝은 모드·어두운 모드)을 따라가요.</p>
+          </div></div>
         <div class="sgroup"><div class="sg-label">창</div>
           <div class="sg-card">
             <div class="sg-row"><span>항상 위에 고정 <small class="muted">작은 메모창</small></span><button class="switch${S.prefs.pinned ? ' on' : ''}" data-act="pin" aria-label="항상 위에 고정"><i></i></button></div>
@@ -2361,6 +2452,7 @@
             }</div>
             <div class="sg-row"><span>닫기 버튼</span><span class="sg-val">트레이로 숨기기</span></div>
             <div class="sg-row"><span>빠른 입력 단축키</span><span class="sg-val">Ctrl + Shift + Space</span></div>
+            <div class="sg-row"><span>되돌리기 · 다시 하기</span><span class="sg-val">Ctrl + Z · Ctrl + Y</span></div>
             ${APP ? '<button class="sg-row btnrow danger" data-act="app-quit"><span>Dayline 완전히 종료</span></button>' : ''}
           </div></div>
         <div class="sgroup"><div class="sg-label">데이터</div>
@@ -2393,6 +2485,27 @@
         ${APP && appInfo.version ? `<p class="sg-help center">Dayline ${esc(appInfo.version)}</p>` : ''}
       </div>`;
   }
+  // 프로젝트 끝내기: 목록·칩·자동 연결에서 빼고, 지난 기록은 이름·색 그대로 둔다
+  function projectEndHtml(p, m) {
+    if (p.ended) {
+      return `<div class="pj-end"><p class="md-p">${esc(dayShort(fromKey(p.ended)))}에 끝낸 프로젝트예요. 목록과 자동 연결에서 빠져 있고, 지난 기록에는 그대로 남아 있어요.</p>
+        <button class="btn ghost" data-act="pj-reopen">${icon('undo', 16)}다시 열기</button></div>`;
+    }
+    const open = openTasksOf(p.id).length;
+    if (m.confirmEnd && open) {
+      return `<div class="pj-end"><p class="md-p warn">아직 안 끝난 할 일이 ${open}개 있어요.</p>
+        <div class="pj-end-btns"><button class="btn ghost" data-act="pj-end" data-val="keep">그대로 두고 끝내기</button><button class="btn ghost" data-act="pj-end" data-val="move">남은 할 일은 미지정으로</button></div></div>`;
+    }
+    return `<div class="pj-end"><p class="md-p muted">다 끝난 프로젝트는 지우지 말고 끝내 두세요. 목록과 자동 연결에서 빠지고, 지난 기록에는 이름과 색이 남아요.</p>
+      <button class="btn ghost" data-act="pj-end">${icon('check', 16)}프로젝트 끝내기</button></div>`;
+  }
+  function reopenProject(p) {
+    if (!p || !p.ended) return;
+    delete p.ended;
+    // 다시 연 프로젝트는 목록 맨 끝으로
+    S.projects.splice(S.projects.indexOf(p), 1);
+    S.projects.push(p);
+  }
   function projectHtml(m) {
     const p = m.id ? proj(m.id) : null;
     const count = p ? S.tasks.filter((t) => t.projectId === p.id).length : 0;
@@ -2410,6 +2523,7 @@
       </div>
       <div class="field row"><span>미리보기</span><span class="pj big"><i style="--c:${colorOf(m.color)}"></i>${esc(m.name || '프로젝트')}</span></div>
       ${m.confirmDel ? `<p class="md-p warn">할 일 ${count}개는 미지정으로 옮겨져요. 한 번 더 누르면 삭제해요.</p>` : ''}
+      ${p ? projectEndHtml(p, m) : ''}
       <div class="md-foot">
         ${p ? `<button class="danger-txt" data-act="pj-delete">${icon('trash', 16)}${m.confirmDel ? '정말 삭제' : '삭제'}</button>` : ''}
         <span class="grow"></span>
@@ -2543,7 +2657,28 @@
   }
 
   /* ---------- 렌더 ---------- */
+  /* ---------- 화면 테마: 시스템(Windows·폰 설정 따라) / 밝게 / 어둡게 ---------- */
+  const darkMQ = window.matchMedia ? window.matchMedia('(prefers-color-scheme: dark)') : null;
+  let themeSent = null;
+  function applyTheme() {
+    const t = S.prefs.theme || 'system';
+    const dark = t === 'dark' || (t === 'system' && !!(darkMQ && darkMQ.matches));
+    const root = document.documentElement;
+    if (root.dataset.theme !== (dark ? 'dark' : 'light')) root.dataset.theme = dark ? 'dark' : 'light';
+    const meta = document.querySelector('meta[name="theme-color"]');
+    if (meta) meta.setAttribute('content', dark ? '#111418' : '#F2F4F6');
+    if (APP && APP.setTheme && themeSent !== t) {
+      themeSent = t;
+      APP.setTheme(t);
+    }
+  }
+  if (darkMQ) {
+    const onScheme = () => (S.prefs.theme || 'system') === 'system' && applyTheme();
+    if (darkMQ.addEventListener) darkMQ.addEventListener('change', onScheme);
+    else if (darkMQ.addListener) darkMQ.addListener(onScheme);
+  }
   function render() {
+    applyTheme();
     const app = document.getElementById('app');
     const ae = document.activeElement;
     const keep = ae && ae.dataset ? ae.dataset.keep : null;
@@ -2552,6 +2687,8 @@
       if (keep && ae.selectionStart != null) sel = [ae.selectionStart, ae.selectionEnd];
     } catch (e) { /* time/date 입력은 커서 위치가 없음 */ }
     const scroll = {};
+    // 이미 열려 있던 고르기 판은 다시 그려도 나타나는 움직임을 되풀이하지 않는다(달 넘기기 등)
+    const pkOpen = new Set([...app.querySelectorAll('.pk[data-pk]')].map((el) => el.dataset.pk));
     app.querySelectorAll('[data-scroll]').forEach((el) => (scroll[el.dataset.scroll] = el.scrollTop));
     const chipsEl = app.querySelector('[data-chips]');
     if (chipsEl) ui.chipsX = chipsEl.scrollLeft;
@@ -2559,6 +2696,7 @@
     app.className = (ui.quit || ui.hidden ? 'mode-desk' : 'mode-' + S.prefs.mode) + (APP ? ' is-app' : '');
     app.innerHTML = ui.quit ? renderQuit() : ui.hidden ? renderHidden() : S.prefs.mode === 'mini' ? renderMini() : renderBig();
 
+    app.querySelectorAll('.pk[data-pk]').forEach((el) => !pkOpen.has(el.dataset.pk) && el.classList.add('enter'));
     if (ui.sheet) ui.sheet.shown = true;
     if (ui.modal) ui.modal.shown = true;
     ui.inboxShown = ui.inbox;
@@ -2659,6 +2797,7 @@
         p = { id: uid(), name: r.project, color: nextColor() };
         S.projects.push(p);
       }
+      if (p.ended) reopenProject(p); // "#이름"으로 끝난 프로젝트를 콕 집어 쓰면 다시 연다
       pid = p.id;
     } else if (!(opts && opts.noAuto) && matchProject(v)) {
       pid = matchProject(v).id;
@@ -2707,6 +2846,29 @@
     commit();
   }
   function setDone(t, v) {
+    // 계획한 날이 지난 일을 오늘 완료하면, 계획한 칸이 아니라 완료한 시각(오늘)에 기록한다.
+    // 반복 일정은 그 회차만 떼어 내서. 원래 계획은 lateFrom에 두고, 완료를 취소하면 되돌린다.
+    if (v && t.date && t.date < todayKey() && !(t.sessions && t.sessions.length)) {
+      const real = seriesOf(t) ? detach(t) : t;
+      const n = now();
+      real.lateFrom = { date: real.date, start: real.start || null, end: real.end || null, duration: real.duration || null, at: fmtHM(n) };
+      real.date = dateKey(n);
+      real.start = fmtHM(n);
+      real.end = null;
+      real.duration = null;
+      real.done = true;
+      real.doneAt = n.toISOString();
+      if (ui.prompt && (ui.prompt.id === t.id || ui.prompt.id === real.id)) ui.prompt = null;
+      return;
+    }
+    if (!v && t.lateFrom) {
+      // 그사이 시간을 직접 바꾸지 않았으면 원래 계획(날짜·시간)으로 되돌린다
+      if (t.start === t.lateFrom.at && !t.end && !t.duration) Object.assign(t, { date: t.lateFrom.date, start: t.lateFrom.start, end: t.lateFrom.end, duration: t.lateFrom.duration });
+      delete t.lateFrom;
+      t.done = false;
+      t.doneAt = null;
+      return;
+    }
     const ser = seriesOf(t);
     if (ser) {
       ser.doneDates = ser.doneDates || {};
@@ -3269,9 +3431,12 @@
         <li>위쪽 작은 창 아이콘: 늘 위에 뜨는 <b>작은 메모창</b>으로 바꿔요(핀으로 고정 끄기). 큰 화면과 작은 창의 위치·크기는 따로 기억해요.</li>
         <li><b>×</b>를 눌러도 꺼지지 않고 오른쪽 아래 트레이로 숨어서 알림을 보내요. 완전히 끄려면 트레이 아이콘 우클릭 → 종료.</li>
         <li><b>Ctrl + Shift + Space</b>: 어디서든 Dayline을 띄우고 바로 입력.</li>
+        <li>설정 → 화면 → <b>테마</b>에서 밝게·어둡게를 고르거나, 시스템(Windows 설정 따라)으로 둬요.</li>
+        <li><b>Ctrl + Z</b>: 방금 한 일 되돌리기(삭제·완료·옮기기·고치기 등, 50번까지). <b>Ctrl + Shift + Z</b>나 <b>Ctrl + Y</b>로 다시 하기. 삭제·완료 뒤 아래에 뜨는 [되돌리기]도 같아요.</li>
         <li>설정 → 창 → <b>컴퓨터 켤 때</b>: 안 켜기 / 트레이에만 / 창 열기.</li>
         <li>프로젝트 이름·색·자동 연결 단어는 왼쪽 프로젝트를 우클릭하거나 색 점을 눌러 바꿔요.</li>
         <li>프로젝트 순서는 왼쪽 목록(작은 창에서는 위쪽 칩)을 끌어서 바꿔요.</li>
+        <li>다 끝난 프로젝트는 편집 창의 <b>프로젝트 끝내기</b>로 치워요. 목록·칩·자동 연결에서 빠지고, 지난 기록에는 이름과 색이 남아요. 왼쪽 아래 '끝난 프로젝트'에서 보거나 다시 열 수 있어요.</li>
       </ul>`],
     ['data', '데이터·백업', `
       <ul>
@@ -3804,6 +3969,40 @@
       if (p) ui.modal = { type: 'project', id: p.id, name: p.name, color: p.color, kw: (p.keywords || []).join(', ') };
       render();
     },
+    'pj-end': (el) => {
+      const m = ui.modal;
+      const p = proj(m.id);
+      if (!p) return;
+      const open = openTasksOf(p.id);
+      if (open.length && !el.dataset.val) {
+        m.confirmEnd = true;
+        return render();
+      }
+      if (el.dataset.val === 'move') open.forEach((t) => (t.projectId = null));
+      p.ended = todayKey();
+      if (S.prefs.filter === p.id) S.prefs.filter = 'all';
+      if (ui.draftProject === p.id) ui.draftProject = null;
+      ui.modal = null;
+      snack(`'${p.name}' 프로젝트를 끝냈어요`);
+      commit();
+    },
+    'pj-reopen': () => {
+      const p = proj(ui.modal.id);
+      reopenProject(p);
+      ui.modal = null;
+      if (p) snack(`'${p.name}' 프로젝트를 다시 열었어요`);
+      commit();
+    },
+    theme: (el) => {
+      S.prefs.theme = el.dataset.val === 'system' ? undefined : el.dataset.val;
+      if (!S.prefs.theme) delete S.prefs.theme;
+      save();
+      render();
+    },
+    'ended-toggle': () => {
+      ui.showEnded = !ui.showEnded;
+      render();
+    },
     'pj-color': (el) => {
       ui.modal.color = el.dataset.val;
       render();
@@ -4139,18 +4338,10 @@
       ui.sheet.d.reminder = el.dataset.val === 'none' ? null : +el.dataset.val;
       render();
     },
+    // 안내의 [되돌리기]: 방금 한 일을 되돌린다(Ctrl+Z와 같음)
     undo: () => {
-      const u = ui.snack && ui.snack.undo;
-      if (!u) return;
-      if (u.full) {
-        const f = JSON.parse(u.full);
-        S.tasks.splice(0, S.tasks.length, ...f.tasks);
-        S.projects.splice(0, S.projects.length, ...f.projects);
-      } else if (u.snap) restore(u.snap);
-      else S.tasks.splice(Math.min(u.index, S.tasks.length), 0, u.task);
       ui.snack = null;
-      snack('되돌렸어요');
-      commit();
+      undoLast(false);
     },
     'retry-save': () => {
       save();
@@ -4304,7 +4495,7 @@
       ui.calMonth = dateKey(new Date(d.getFullYear(), d.getMonth(), 1));
       render();
     },
-    'cal-move': (el) => {
+    'cp-move': (el) => { // 옆 달력의 달 넘기기(상세의 날짜 고르기 'cal-move'와 따로)
       const b = ui.calMonth ? fromKey(ui.calMonth) : fromKey(ui.calSel || todayKey());
       ui.calMonth = dateKey(new Date(b.getFullYear(), b.getMonth() + +el.dataset.val, 1));
       render();
@@ -4828,6 +5019,14 @@
     }
   });
   document.addEventListener('keydown', (e) => {
+    // Ctrl+Z 되돌리기, Ctrl+Shift+Z·Ctrl+Y 다시 하기. 글을 치는 칸에서는 글자 되돌리기로 둔다
+    if ((e.ctrlKey || e.metaKey) && !e.altKey && /^[zy]$/i.test(e.key)) {
+      const typing = e.target.matches && e.target.matches('input, textarea, [contenteditable="true"]');
+      if (!typing && !ui.modal && !D) {
+        e.preventDefault();
+        return undoLast(e.key.toLowerCase() === 'y' || e.shiftKey);
+      }
+    }
     if (hashState.open && e.target.classList && e.target.classList.contains('qi-input') && !e.isComposing) {
       if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
         e.preventDefault();
@@ -4973,7 +5172,7 @@
       const t = findTask(D.id);
       const g = document.createElement('div');
       g.className = 'drag-ghost row-ghost';
-      g.innerHTML = `<i style="--c:${pColor(proj(t && t.projectId))}"></i><span>${esc(t ? plainTitle(t) : '')}</span>`;
+      g.innerHTML = `<i style="--c:${pColor(proj(t && t.projectId))}"></i><span>${esc(t ? shownTitle(t) : '')}</span>`;
       document.body.appendChild(g);
       D.ghost = g;
       D.offX = -14;

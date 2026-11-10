@@ -26,6 +26,7 @@ contextBridge.exposeInMainWorld('dayline', {
   saveImage: (dataUrl) => ipcRenderer.invoke('img:save', String(dataUrl)),
   deleteImage: (file) => ipcRenderer.invoke('img:delete', String(file)),
   openImage: (file) => ipcRenderer.invoke('img:open', String(file)),
+  setTheme: (t) => ipcRenderer.send('app:setTheme', String(t)),
   on: (ch, cb) => {
     if (!CHANNELS.includes(ch)) return;
     ipcRenderer.on(ch, (_e, data) => cb(data));

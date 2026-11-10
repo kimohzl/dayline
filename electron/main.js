@@ -1,7 +1,7 @@
 /* Dayline — Windows 앱 껍데기 (Electron)
  * 화면은 index.html 그대로 쓰고, 여기서는 창·트레이·알림·자동 실행·스티커 메모만 맡는다. */
 const {
-  app, BrowserWindow, Tray, Menu, ipcMain, Notification, globalShortcut, screen, nativeImage, dialog, shell, session, clipboard, net,
+  app, BrowserWindow, Tray, Menu, ipcMain, Notification, globalShortcut, screen, nativeImage, dialog, shell, session, clipboard, net, nativeTheme,
 } = require('electron');
 const path = require('path');
 const fs = require('fs');
@@ -34,6 +34,8 @@ function start() {
   let pinned = st.pinned !== false;
   const bounds = st.bounds || {};
   const toasts = new Set(); // 알림이 사라지기 전에 정리되지 않도록 붙잡아 둔다
+  nativeTheme.themeSource = ['light', 'dark'].includes(st.theme) ? st.theme : 'system';
+  const themeBg = () => (nativeTheme.shouldUseDarkColors ? '#111418' : '#F2F4F6');
 
   /* ---------- 상태 파일 ---------- */
   function stateFile() {
@@ -201,7 +203,7 @@ function start() {
       frame: false,
       show: false,
       title: 'Dayline',
-      backgroundColor: '#F2F4F6',
+      backgroundColor: themeBg(),
       icon: path.join(ROOT, 'assets', 'icon.png'),
       webPreferences: {
         preload: path.join(__dirname, 'preload.js'),
@@ -488,6 +490,15 @@ function start() {
     return true;
   });
   ipcMain.handle('img:open', (_e, file) => (imgName(file) ? shell.openPath(path.join(imgDir(), file)) : 'bad name'));
+  // 화면 테마: 시스템 / 밝게 / 어둡게. 창이 뜰 때 바탕색도 맞춘다(다크 모드에서 흰 화면이 번쩍이지 않게)
+  ipcMain.on('app:setTheme', (_e, v) => {
+    const t = ['light', 'dark'].includes(v) ? v : 'system';
+    if (st.theme === t && nativeTheme.themeSource === t) return;
+    st.theme = t;
+    nativeTheme.themeSource = t;
+    saveState();
+    if (win && !win.isDestroyed()) win.setBackgroundColor(themeBg());
+  });
   // 컴퓨터 켤 때 창을 띄울지(끄면 트레이에만)
   ipcMain.handle('app:setStartShow', (_e, v) => {
     st.startHidden = !v;
